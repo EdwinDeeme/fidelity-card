@@ -5,11 +5,6 @@ import jsQR from "jsqr";
 import QRCode from "qrcode";
 import styles from "./page.module.css";
 
-type DeferredInstallPrompt = Event & {
-  prompt: () => Promise<void>;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
-};
-
 type CardRow = {
   card_public_id: string;
   customer_name?: string;
@@ -40,7 +35,7 @@ function translateScannerState(state: ScannerState): string {
     case "running":
       return "Escaneando";
     case "success":
-      return "Escaneo completado";
+      return "Tarjeta sellada";
     case "error":
       return "Error";
     default:
@@ -115,42 +110,11 @@ export default function Home() {
   const [scannerState, setScannerState] = useState<ScannerState>("idle");
   const [scanResult, setScanResult] = useState("");
   const [manualCode, setManualCode] = useState("");
-  const [installPromptEvent, setInstallPromptEvent] = useState<DeferredInstallPrompt | null>(null);
-  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     void loadCards();
     return () => {
       stopScanner();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const standalone = window.matchMedia("(display-mode: standalone)").matches;
-    const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-    setIsStandalone(standalone || iosStandalone);
-
-    const handleBeforeInstallPrompt = (event: Event) => {
-      event.preventDefault();
-      setInstallPromptEvent(event as DeferredInstallPrompt);
-    };
-
-    const handleInstalled = () => {
-      setInstallPromptEvent(null);
-      setIsStandalone(true);
-      setNotice("La app web se instalo correctamente en el inicio.");
-    };
-
-    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-    window.addEventListener("appinstalled", handleInstalled);
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
-      window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
 
@@ -417,8 +381,11 @@ export default function Home() {
 
                 if (value) {
                   setScanResult(value);
-                  await submitStamp(value);
+                  const stampResult = await submitStamp(value);
                   stopScanner();
+                  if (stampResult === "sealed") {
+                    setScannerState("success");
+                  }
                   return;
                 }
               }
@@ -460,13 +427,20 @@ export default function Home() {
     setScannerState("idle");
   }
 
-  async function submitStamp(rawValue: string) {
+  function handleScanSuccessOk() {
+    stopScanner();
+    setScanResult("");
+    setNotice("");
+    setScannerState("idle");
+  }
+
+  async function submitStamp(rawValue: string): Promise<"sealed" | "duplicate" | "error"> {
     const idempotency = crypto.randomUUID();
     const publicId = normalizeCardCode(rawValue);
 
     if (!publicId) {
       setNotice("Codigo de tarjeta vacio");
-      return;
+      return "error";
     }
 
     try {
@@ -488,18 +462,20 @@ export default function Home() {
 
       if (!response.ok) {
         setNotice(data.error?.message ?? "No se pudo agregar el sello");
-        return;
+        return "error";
       }
 
       if (data.duplicated) {
         setNotice("Sello ya registrado");
+        return "duplicate";
       } else {
-        setNotice(`Sello agregado: ${data.stamp_count}/${data.stamp_limit}`);
+        setNotice("");
+        await loadCards();
+        return "sealed";
       }
-
-      await loadCards();
     } catch {
       setNotice("Error de conexion al registrar el sello");
+      return "error";
     }
   }
 
@@ -510,37 +486,6 @@ export default function Home() {
     }
     await submitStamp(manualCode);
     setManualCode("");
-  }
-
-  async function handleInstallApp() {
-    if (isStandalone) {
-      setNotice("La app ya esta instalada en el inicio de este dispositivo.");
-      return;
-    }
-
-    if (installPromptEvent) {
-      await installPromptEvent.prompt();
-      const choice = await installPromptEvent.userChoice;
-
-      if (choice.outcome === "accepted") {
-        setNotice("Instalacion iniciada desde el navegador.");
-      } else {
-        setNotice("Instalacion cancelada. Puedes intentarlo de nuevo cuando quieras.");
-      }
-
-      setInstallPromptEvent(null);
-      return;
-    }
-
-    const userAgent = navigator.userAgent.toLowerCase();
-    const isIos = /iphone|ipad|ipod/.test(userAgent);
-
-    if (isIos) {
-      setNotice("En iPhone abre Compartir y toca 'Anadir a pantalla de inicio' para instalar la app.");
-      return;
-    }
-
-    setNotice("Si tu navegador no muestra instalacion automatica, abre el menu y busca 'Instalar app' o 'Anadir a pantalla de inicio'.");
   }
 
   return (
@@ -628,12 +573,6 @@ export default function Home() {
                   </button>
                 </div>
 
-                <div className={styles.utilityBar}>
-                  <button type="button" className={styles.installButton} onClick={() => void handleInstallApp()}>
-                    <i className="fas fa-download"></i>
-                    {isStandalone ? "App instalada" : "Instalar app en inicio"}
-                  </button>
-                </div>
               </>
             ) : null}
 
@@ -739,7 +678,16 @@ export default function Home() {
                 </div>
 
                 <div className={styles.scannerViewport}>
-                  <video ref={videoRef} className={styles.video} muted playsInline />
+                  {scannerState === "success" ? (
+                    <div className={styles.scanSuccessPanel}>
+                      <p className={styles.scanSuccessTitle}>La tarjeta fue sellada correctamente</p>
+                      <button type="button" className={styles.scanSuccessButton} onClick={handleScanSuccessOk}>
+                        Genial
+                      </button>
+                    </div>
+                  ) : (
+                    <video ref={videoRef} className={styles.video} muted playsInline />
+                  )}
                 </div>
                 <canvas ref={canvasRef} className={styles.hiddenCanvas} aria-hidden />
 
