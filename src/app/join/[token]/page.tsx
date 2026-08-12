@@ -225,7 +225,7 @@ export default function LoyaltyCardPage() {
               }}
             >
               <p style={{ margin: 0, fontSize: 12, opacity: 0.9, letterSpacing: "0.06em", textTransform: "uppercase" }}>
-                Cliente
+                Tarjeta de fidelidad de
               </p>
               <h1 style={{ margin: 0, fontSize: 22, lineHeight: 1.1 }}>
                 {card.customer_name || "Cliente"}

@@ -319,6 +319,43 @@
   display: block;
 }
 
+.scanSuccessPanel {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 14px;
+  text-align: center;
+  background: linear-gradient(160deg, #e6ffec 0%, #d4f7de 100%);
+}
+
+.scanSuccessTitle {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #176236;
+}
+
+.scanSuccessCode {
+  margin: 0;
+  font-size: 0.82rem;
+  color: #1d6f40;
+  word-break: break-word;
+}
+
+.scanSuccessButton {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, #3bad5e 0%, #228b4b 100%);
+  cursor: pointer;
+}
+
 .hiddenCanvas {
   display: none;
 }

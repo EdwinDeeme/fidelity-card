@@ -19,12 +19,14 @@ type CardRow = {
   reward_name: string;
 };
 
-type ScannerState = "idle" | "running" | "error";
+type ScannerState = "idle" | "running" | "success" | "error";
 type DeviceState = "unknown" | "active" | "needs-activation";
 type UIMode = "scan" | "list" | "create" | "edit" | "handoff";
 
 type CreateCardResponse = {
   card_public_id?: string;
+    case "success":
+      return "Escaneo completado";
   stamp_count?: number;
   stamp_limit?: number;
   join_url?: string;
