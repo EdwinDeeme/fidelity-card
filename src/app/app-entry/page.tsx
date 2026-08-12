@@ -8,10 +8,9 @@ export default function AppEntryPage() {
 
   useEffect(() => {
     const token = window.localStorage.getItem("customer_card_token");
-    const target = window.localStorage.getItem("home_install_target");
 
-    if (target === "customer-card" && token) {
-      router.replace(`/join/${token}`);
+    if (token) {
+      router.replace(`/join/${encodeURIComponent(token)}`);
       return;
     }
 

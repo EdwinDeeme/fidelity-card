@@ -54,6 +54,7 @@ export default function LoyaltyCardPage() {
   useEffect(() => {
     if (typeof window !== "undefined" && token) {
       window.localStorage.setItem("customer_card_token", token);
+      window.localStorage.setItem("home_install_target", "customer-card");
     }
 
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
@@ -69,7 +70,7 @@ export default function LoyaltyCardPage() {
     return () => {
       window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
     };
-  }, []);
+  }, [token]);
 
   async function handleInstallApp() {
     if (typeof window !== "undefined" && token) {
