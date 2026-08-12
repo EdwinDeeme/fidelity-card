@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum CardStatus {
+  ACTIVE
+  REWARDED
+  REDEEMED
+  DISABLED
+}
+
+enum SalonDeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum CardEventType {
+  CARD_CREATED
+  STAMP_ADDED
+  STAMP_REMOVED
+  REWARD_REDEEMED
+  CARD_DISABLED
+  ONBOARDING_STARTED
+  ONBOARDING_COMPLETED
+}
+
+model Card {
+  id                String              @id @default(uuid()) @db.Uuid
+  publicId          String              @unique @db.VarChar(64)
+    customerName      String?             @db.VarChar(120)
+  walletState       Json                @default("{}")
+  stampCount        Int                 @default(0) @db.SmallInt
+  stampLimit        Int                 @db.SmallInt
+  rewardName        String              @db.VarChar(80)
+  rewardDescription String?             @db.VarChar(160)
+  status            CardStatus          @default(ACTIVE)
+  updateTag         BigInt              @default(0)
+  createdAt         DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime            @updatedAt @db.Timestamptz(6)
+  onboardingTokens  OnboardingToken[]
+  events            CardEvent[]
+  appleRegistrations AppleRegistration[]
+
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model OnboardingToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenHash String   @unique @db.Char(64)
+  cardId    String   @db.Uuid
+  expiresAt DateTime @db.Timestamptz(6)
+  consumedAt DateTime? @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  card      Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId])
+  @@index([expiresAt])
+  @@index([consumedAt])
+}
+
+model CardEvent {
+  id             BigInt       @id @default(autoincrement())
+  cardId          String       @db.Uuid
+  eventType       CardEventType
+  idempotencyKey  String?      @db.VarChar(80)
+  actorType       String       @db.VarChar(24)
+  actorRef        String?      @db.VarChar(80)
+  metadata        Json         @default("{}")
+  createdAt       DateTime     @default(now()) @db.Timestamptz(6)
+  card            Card         @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@index([cardId, createdAt(sort: Desc)])
+  @@unique([cardId, idempotencyKey], map: "card_events_card_id_idempotency_key_unique")
+}
+
+model ApplePass {
+  id              String   @id @default(uuid()) @db.Uuid
+  cardPublicId    String   @unique @db.VarChar(64)
+  serialNumber    String   @unique @db.VarChar(128)
+  passTypeId      String   @db.VarChar(80)
+  pkpassData      Bytes    // Stored as BYTEA
+  stampCount      Int      @default(0)
+  status          String   @default("ACTIVE") @db.VarChar(16) // ACTIVE, VOIDED, REDEEMED
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+  registrations   AppleRegistration[]
+
+  @@index([status])
+  @@index([updatedAt])
+}
+
+model AppleDevice {
+  deviceLibraryId String   @id @db.VarChar(128)
+  pushToken       String   @db.VarChar(255)
+  createdAt       DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @db.Timestamptz(6)
+  registrations   AppleRegistration[]
+}
+
+model AppleRegistration {
+  id               BigInt      @id @default(autoincrement())
+  deviceLibraryId  String      @db.VarChar(128)
+  cardId           String      @db.Uuid
+  applePassId      String      @db.Uuid
+  createdAt        DateTime    @default(now()) @db.Timestamptz(6)
+  device           AppleDevice @relation(fields: [deviceLibraryId], references: [deviceLibraryId], onDelete: Cascade)
+  card             Card        @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  applePass        ApplePass   @relation(fields: [applePassId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceLibraryId, cardId])
+  @@index([applePassId])
+}
+
+model SalonDevice {
+  id               String            @id @default(uuid()) @db.Uuid
+  deviceName       String            @db.VarChar(80)
+  deviceSecretHash String            @db.Char(64)
+  status           SalonDeviceStatus @default(ACTIVE)
+  lastSeenAt       DateTime?         @db.Timestamptz(6)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+}

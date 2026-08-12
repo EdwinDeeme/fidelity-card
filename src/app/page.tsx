@@ -1,0 +1,745 @@
+"use client";
+
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
+import styles from "./page.module.css";
+
+type CardRow = {
+  card_public_id: string;
+  customer_name?: string;
+  stamp_count: number;
+  stamp_limit: number;
+  status: string;
+  reward_name: string;
+};
+
+type ScannerState = "idle" | "running" | "error";
+type DeviceState = "unknown" | "active" | "needs-activation";
+type UIMode = "scan" | "list" | "create" | "edit";
+
+type CreateCardResponse = {
+  card_public_id?: string;
+  stamp_count?: number;
+  stamp_limit?: number;
+  join_url?: string;
+  error?: { message?: string };
+};
+
+function shortCardId(publicId: string): string {
+  return publicId.slice(0, 4).toUpperCase();
+}
+
+function normalizeCardCode(rawValue: string): string {
+  const code = rawValue.trim();
+  if (!code) {
+    return "";
+  }
+
+  if (!code.includes("/")) {
+    return code;
+  }
+
+  const parts = code.split("/").filter(Boolean);
+  return parts[parts.length - 1] ?? "";
+}
+
+export default function Home() {
+  const [cards, setCards] = useState<CardRow[]>([]);
+  const [loadingCards, setLoadingCards] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [deviceState, setDeviceState] = useState<DeviceState>("unknown");
+  const [uiMode, setUiMode] = useState<UIMode>("scan");
+
+  const [activationCode, setActivationCode] = useState("");
+  const [pin, setPin] = useState("");
+  const [deviceName, setDeviceName] = useState("Recepcion salon");
+  const [activating, setActivating] = useState(false);
+
+  // Create mode
+  const [stampLimit, setStampLimit] = useState(9);
+  const [customerName, setCustomerName] = useState("");
+  const [rewardName, setRewardName] = useState("Manicura gratis");
+  const [rewardDescription, setRewardDescription] = useState("Al completar 9 sellos");
+  const [joinUrl, setJoinUrl] = useState("");
+  const [joinQrDataUrl, setJoinQrDataUrl] = useState("");
+  const [lastCreatedCard, setLastCreatedCard] = useState("");
+
+  // Edit mode
+  const [selectedCard, setSelectedCard] = useState<CardRow | null>(null);
+  const [editStampLimit, setEditStampLimit] = useState(9);
+  const [editCustomerName, setEditCustomerName] = useState("");
+  const [editRewardName, setEditRewardName] = useState("");
+  const [editRewardDescription, setEditRewardDescription] = useState("");
+  const [editingSaving, setEditingSaving] = useState(false);
+
+  // Scanner
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const [scannerState, setScannerState] = useState<ScannerState>("idle");
+  const [scanResult, setScanResult] = useState("");
+  const [manualCode, setManualCode] = useState("");
+
+  const hasBarcodeDetector = useMemo(
+    () => typeof window !== "undefined" && "BarcodeDetector" in window,
+    []
+  );
+
+  useEffect(() => {
+    void loadCards();
+    return () => {
+      stopScanner();
+    };
+  }, []);
+
+  async function loadCards() {
+    setLoadingCards(true);
+    try {
+      const response = await fetch("/api/v1/cards", {
+        method: "GET",
+      });
+
+      if (response.status === 401) {
+        setDeviceState("needs-activation");
+        setCards([]);
+        return false;
+      }
+
+      const data = (await response.json().catch(() => null)) as
+        | { cards?: CardRow[]; error?: { message?: string } }
+        | null;
+
+      if (!response.ok) {
+        setNotice(data?.error?.message ?? "No se pudieron cargar las tarjetas");
+        return false;
+      }
+
+      setDeviceState("active");
+      setCards(data?.cards ?? []);
+      return true;
+    } catch {
+      setNotice("Error de conexion al cargar tarjetas");
+      return false;
+    } finally {
+      setLoadingCards(false);
+    }
+  }
+
+  async function handleActivateDevice(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setActivating(true);
+    setNotice("");
+
+    try {
+      const response = await fetch("/api/v1/salon/devices/activate", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          activation_code: activationCode,
+          pin,
+          device_name: deviceName,
+        }),
+      });
+
+      const data = (await response.json().catch(() => null)) as
+        | { device_id?: string; error?: { message?: string } }
+        | null;
+
+      if (!response.ok) {
+        setNotice(data?.error?.message ?? "No se pudo activar el dispositivo");
+        return;
+      }
+
+      setDeviceState("active");
+      setActivationCode("");
+      setPin("");
+
+      // Verificar de inmediato que el navegador haya persistido la cookie de sesion.
+      const sessionOk = await loadCards();
+      if (!sessionOk) {
+        setDeviceState("needs-activation");
+        setNotice(
+          "Se activo el dispositivo, pero el navegador del movil no guardo la sesion. Abre en Chrome/Safari normal y permite cookies."
+        );
+        return;
+      }
+
+      setNotice("Dispositivo activado correctamente");
+    } catch {
+      setNotice("Error de conexion al activar el dispositivo");
+    } finally {
+      setActivating(false);
+    }
+  }
+
+  async function handleCreateCard(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setNotice("");
+    setJoinUrl("");
+    setJoinQrDataUrl("");
+
+    try {
+      const response = await fetch("/api/v1/cards", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          stamp_limit: stampLimit,
+          customer_name: customerName.trim() || undefined,
+          reward_name: rewardName,
+          reward_description: rewardDescription,
+        }),
+      });
+
+      const data = (await response.json()) as CreateCardResponse;
+
+      if (!response.ok) {
+        setNotice(data.error?.message ?? "No se pudo crear la tarjeta");
+        return;
+      }
+
+      setJoinUrl(data.join_url ?? "");
+      setLastCreatedCard(data.card_public_id ?? "");
+
+      if (data.join_url) {
+        const qrDataUrl = await QRCode.toDataURL(data.join_url, {
+          width: 320,
+          margin: 1,
+          color: {
+            dark: "#752a2f",
+            light: "#fffdf8",
+          },
+        });
+        setJoinQrDataUrl(qrDataUrl);
+      }
+
+      setNotice("Tarjeta creada correctamente");
+      
+      // Limpiar formulario
+      setCustomerName("");
+      setRewardName("Manicura gratis");
+      setRewardDescription("Al completar 9 sellos");
+      setStampLimit(9);
+      
+      // Reload y cambiar vista
+      setTimeout(() => {
+        void loadCards();
+        setUiMode("scan");
+        setJoinUrl("");
+        setJoinQrDataUrl("");
+      }, 1500);
+    } catch {
+      setNotice("Error de conexion al crear la tarjeta");
+    }
+  }
+
+  function openEditCard(card: CardRow) {
+    setSelectedCard(card);
+    setEditStampLimit(card.stamp_limit);
+    setEditCustomerName(card.customer_name || "");
+    setEditRewardName(card.reward_name);
+    setEditRewardDescription("");
+    setUiMode("edit");
+    setNotice("");
+  }
+
+  async function handleSaveCard() {
+    if (!selectedCard) return;
+
+    setEditingSaving(true);
+    setNotice("");
+
+    try {
+      const response = await fetch(`/api/v1/cards/${selectedCard.card_public_id}`, {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          stamp_limit: editStampLimit,
+          customer_name: editCustomerName.trim() || null,
+          reward_name: editRewardName,
+          reward_description: editRewardDescription || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        setNotice(data?.error?.message ?? "Error al guardar");
+        return;
+      }
+
+      setNotice("Tarjeta actualizada");
+      setTimeout(() => {
+        void loadCards();
+        setUiMode("list");
+        setSelectedCard(null);
+        setNotice("");
+      }, 1000);
+    } catch {
+      setNotice("Error de conexion al guardar");
+    } finally {
+      setEditingSaving(false);
+    }
+  }
+
+  async function startScanner() {
+    setNotice("");
+    setScanResult("");
+
+    if (!videoRef.current) {
+      setScannerState("error");
+      setNotice("No se pudo iniciar la camara");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: {
+            ideal: "environment",
+          },
+        },
+        audio: false,
+      });
+
+      mediaStreamRef.current = stream;
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      setScannerState("running");
+
+      if (!hasBarcodeDetector) {
+        setNotice("Tu navegador no soporta deteccion QR nativa. Puedes ingresar el codigo manualmente.");
+        return;
+      }
+
+      const detector = new window.BarcodeDetector({
+        formats: ["qr_code", "aztec", "pdf417"],
+      });
+
+      const loop = async () => {
+        if (!videoRef.current) {
+          return;
+        }
+
+        try {
+          const found = await detector.detect(videoRef.current);
+          if (found.length > 0) {
+            const value = found[0].rawValue ?? "";
+            if (value) {
+              setScanResult(value);
+              await submitStamp(value);
+              stopScanner();
+              return;
+            }
+          }
+        } catch {
+          setNotice("No se pudo leer el codigo. Intenta nuevamente.");
+        }
+
+        rafRef.current = requestAnimationFrame(() => {
+          void loop();
+        });
+      };
+
+      await loop();
+    } catch {
+      setScannerState("error");
+      setNotice("Permiso de camara denegado o no disponible");
+    }
+  }
+
+  function stopScanner() {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      for (const track of mediaStreamRef.current.getTracks()) {
+        track.stop();
+      }
+      mediaStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setScannerState("idle");
+  }
+
+  async function submitStamp(rawValue: string) {
+    const idempotency = crypto.randomUUID();
+    const publicId = normalizeCardCode(rawValue);
+
+    if (!publicId) {
+      setNotice("Codigo de tarjeta vacio");
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/v1/cards/${publicId}/stamps`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": idempotency,
+        },
+        body: JSON.stringify({ action: "ADD" }),
+      });
+
+      const data = (await response.json()) as {
+        stamp_count?: number;
+        stamp_limit?: number;
+        duplicated?: boolean;
+        error?: { message?: string };
+      };
+
+      if (!response.ok) {
+        setNotice(data.error?.message ?? "No se pudo agregar el sello");
+        return;
+      }
+
+      if (data.duplicated) {
+        setNotice("Sello ya registrado");
+      } else {
+        setNotice(`Sello agregado: ${data.stamp_count}/${data.stamp_limit}`);
+      }
+
+      await loadCards();
+    } catch {
+      setNotice("Error de conexion al registrar el sello");
+    }
+  }
+
+  async function handleManualStamp() {
+    if (!manualCode.trim()) {
+      setNotice("Ingresa un codigo para registrar sello");
+      return;
+    }
+    await submitStamp(manualCode);
+    setManualCode("");
+  }
+
+  return (
+    <div className={styles.page}>
+      <div className={styles.backgroundGlow} aria-hidden />
+      <main className={styles.main}>
+        <header className={styles.header}>
+          <div className={styles.headerInner}>
+            <img src="/stamp-seal.png" alt="Logo" className={styles.headerLogo} />
+            <h1>Tarjetas de Fidelidad</h1>
+          </div>
+        </header>
+
+        {notice ? <div className={styles.notice}>{notice}</div> : null}
+
+        {deviceState !== "active" ? (
+          <section className={styles.heroRow}>
+            <article className={styles.activationCard}>
+              <h2>Activar este dispositivo</h2>
+              <p className={styles.activationHint}>
+                Activa tu tablet, telefono o computadora con el codigo y PIN del salon.
+              </p>
+              <form className={styles.form} onSubmit={handleActivateDevice}>
+                <label>
+                  Codigo de activacion
+                  <input
+                    value={activationCode}
+                    onChange={(e) => setActivationCode(e.target.value)}
+                    placeholder="Codigo del salon"
+                  />
+                </label>
+
+                <label>
+                  PIN del salon
+                  <input
+                    type="password"
+                    value={pin}
+                    onChange={(e) => setPin(e.target.value)}
+                    placeholder="PIN"
+                  />
+                </label>
+
+                <label>
+                  Nombre del dispositivo
+                  <input
+                    value={deviceName}
+                    onChange={(e) => setDeviceName(e.target.value)}
+                    placeholder="Recepcion salon"
+                  />
+                </label>
+
+                <button type="submit" disabled={activating}>
+                  <i className="fas fa-check"></i>
+                  {activating ? "Activando..." : "Activar dispositivo"}
+                </button>
+              </form>
+            </article>
+          </section>
+        ) : null}
+
+        {deviceState === "active" ? (
+          <>
+            {/* Tab Navigation */}
+            <div className={styles.tabNav}>
+              <button
+                className={`${styles.tabButton} ${uiMode === "scan" ? styles.active : ""}`}
+                onClick={() => setUiMode("scan")}
+              >
+                <i className="fas fa-camera"></i>
+                Escanear
+              </button>
+              <button
+                className={`${styles.tabButton} ${uiMode === "list" ? styles.active : ""}`}
+                onClick={() => setUiMode("list")}
+              >
+                <i className="fas fa-list"></i>
+                Tarjetas
+              </button>
+              <button
+                className={`${styles.tabButton} ${uiMode === "create" ? styles.active : ""}`}
+                onClick={() => setUiMode("create")}
+              >
+                <i className="fas fa-plus-circle"></i>
+                Crear Nueva
+              </button>
+            </div>
+
+            <section className={styles.contentPane}>
+
+            {/* LIST MODE */}
+            {uiMode === "list" && (
+              <>
+                <section className={styles.card}>
+                  <div className={styles.listHeader}>
+                    <h2>Tarjetas Activas ({cards.length})</h2>
+                    <button type="button" className={styles.ghostButton} onClick={() => void loadCards()}>
+                      <i className="fas fa-sync-alt"></i>
+                      Actualizar
+                    </button>
+                  </div>
+
+                  {loadingCards ? <p>Cargando...</p> : null}
+
+                  <div className={styles.list}>
+                    {cards.map((card) => (
+                      <div key={card.card_public_id} className={styles.listItem}>
+                        <div className={styles.listItemInfo} onClick={() => openEditCard(card)}>
+                          <p className={styles.cardId}>#{shortCardId(card.card_public_id)}</p>
+                          <p className={styles.meta}>{card.customer_name || "Sin nombre"}</p>
+                          <p className={styles.meta}>{card.reward_name}</p>
+                          <div className={styles.progressWrap}>
+                            <p className={styles.progress}>
+                              {card.stamp_count} / {card.stamp_limit} sellos
+                            </p>
+                          </div>
+                        </div>
+                        <div className={styles.listItemActions}>
+                          <a
+                            href={`/join/${card.card_public_id}`}
+                            className={styles.viewCardButton}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <i className="fas fa-eye"></i>
+                            Ver
+                          </a>
+                          <button
+                            type="button"
+                            className={styles.ghostButton}
+                            style={{ padding: "8px 12px", fontSize: "0.8rem" }}
+                            onClick={() => openEditCard(card)}
+                          >
+                            <i className="fas fa-edit"></i>
+                            Editar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {!loadingCards && cards.length === 0 ? (
+                      <div className={styles.emptyState}>No hay tarjetas registradas aún</div>
+                    ) : null}
+                  </div>
+                </section>
+              </>
+            )}
+
+            {/* SCAN MODE */}
+            {uiMode === "scan" && (
+              <article className={styles.card}>
+                <h2>Escanear QR</h2>
+                <div className={styles.scannerActions}>
+                  <button type="button" onClick={() => void startScanner()} disabled={deviceState !== "active"}>
+                    <i className="fas fa-camera"></i>
+                    Abrir cámara
+                  </button>
+                  <button type="button" onClick={stopScanner} className={styles.ghostButton}>
+                    <i className="fas fa-times"></i>
+                    Detener
+                  </button>
+                </div>
+
+                <video ref={videoRef} className={styles.video} muted playsInline />
+
+                <p className={styles.helper}>Estado: {scannerState}</p>
+
+                <div className={styles.manualRow}>
+                  <input
+                    placeholder="O ingresa el codigo manualmente"
+                    value={manualCode}
+                    onChange={(e) => setManualCode(e.target.value)}
+                    disabled={deviceState !== "active"}
+                  />
+                  <button type="button" onClick={() => void handleManualStamp()} disabled={deviceState !== "active"}>
+                    <i className="fas fa-plus"></i>
+                    Agregar
+                  </button>
+                </div>
+              </article>
+            )}
+
+            {/* CREATE MODE */}
+            {uiMode === "create" && (
+              <article className={styles.card}>
+                <h2>Nueva Tarjeta</h2>
+                <form className={styles.form} onSubmit={handleCreateCard}>
+                  <label>
+                    Sellos requeridos
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={stampLimit}
+                      onChange={(e) => setStampLimit(Number(e.target.value || "9"))}
+                    />
+                  </label>
+
+                  <label>
+                    Nombre del cliente (opcional)
+                    <input
+                      value={customerName}
+                      onChange={(e) => setCustomerName(e.target.value)}
+                      placeholder="Ej: Maria Garcia"
+                    />
+                  </label>
+
+                  <label>
+                    Nombre de recompensa
+                    <input value={rewardName} onChange={(e) => setRewardName(e.target.value)} />
+                  </label>
+
+                  <label>
+                    Descripcion
+                    <input
+                      value={rewardDescription}
+                      onChange={(e) => setRewardDescription(e.target.value)}
+                    />
+                  </label>
+
+                  <button type="submit">
+                    <i className="fas fa-star"></i>
+                    Crear Tarjeta
+                  </button>
+                </form>
+
+                {joinUrl ? (
+                  <div className={styles.createdPanel}>
+                    <div className={styles.createdGrid}>
+                      <div>
+                        <p>Tarjeta creada: #{shortCardId(lastCreatedCard)}</p>
+                        <p>Muestra este QR al cliente</p>
+                        <a href={joinUrl} target="_blank" rel="noreferrer">
+                          {joinUrl}
+                        </a>
+                      </div>
+
+                      {joinQrDataUrl ? (
+                        <div className={styles.qrPanel}>
+                          <img className={styles.qrImage} src={joinQrDataUrl} alt="QR onboarding" />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            )}
+
+            {/* EDIT MODE */}
+            {uiMode === "edit" && selectedCard && (
+              <article className={styles.card}>
+                <h2>Editar Tarjeta #{shortCardId(selectedCard.card_public_id)}</h2>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void handleSaveCard();
+                  }}
+                  className={styles.form}
+                >
+                  <label>
+                    Nombre del cliente
+                    <input
+                      value={editCustomerName}
+                      onChange={(e) => setEditCustomerName(e.target.value)}
+                      placeholder="Ej: Maria Garcia"
+                    />
+                  </label>
+
+                  <label>
+                    Sellos requeridos
+                    <input
+                      type="number"
+                      min={1}
+                      max={20}
+                      value={editStampLimit}
+                      onChange={(e) => setEditStampLimit(Number(e.target.value || "9"))}
+                    />
+                  </label>
+
+                  <label>
+                    Recompensa
+                    <input value={editRewardName} onChange={(e) => setEditRewardName(e.target.value)} />
+                  </label>
+
+                  <label>
+                    Descripcion
+                    <input
+                      value={editRewardDescription}
+                      onChange={(e) => setEditRewardDescription(e.target.value)}
+                    />
+                  </label>
+
+                  <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+                    <button type="submit" disabled={editingSaving}>
+                      <i className="fas fa-save"></i>
+                      {editingSaving ? "Guardando..." : "Guardar Cambios"}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles.ghostButton}
+                      onClick={() => {
+                        setUiMode("list");
+                        setSelectedCard(null);
+                      }}
+                    >
+                      <i className="fas fa-times"></i>
+                      Cancelar
+                    </button>
+                  </div>
+                </form>
+
+                <div style={{ marginTop: 24, padding: "12px", background: "#fdf0ed", borderRadius: 8 }}>
+                  <p style={{ margin: 0, fontSize: 12, color: "#9c495a" }}>
+                    <i className="fas fa-info-circle"></i> <strong>Nota:</strong> No puedes quitar sellos, solo editar cantidad requerida y datos
+                  </p>
+                </div>
+              </article>
+            )}
+            </section>
+          </>
+        ) : null}
+      </main>
+    </div>
+  );
+}
