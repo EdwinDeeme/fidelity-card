@@ -2,7 +2,7 @@
   min-height: 100vh;
   width: 100%;
   background: linear-gradient(160deg, #fff6ef 0%, #fffdf8 100%);
-  padding: 16px 12px 8px;
+  padding: 16px 12px 20px;
   display: flex;
   justify-content: center;
 }
@@ -14,11 +14,11 @@
 .main {
   width: 100%;
   max-width: 460px;
-  display: grid;
-  grid-template-rows: 84px 52px minmax(0, 1fr);
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   margin: 0 auto;
-  min-height: calc(100vh - 24px);
+  min-height: calc(100vh - 36px);
 }
 
 .header {
@@ -27,7 +27,6 @@
   border-radius: 18px;
   height: 84px;
   padding: 0 12px;
-  margin-bottom: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -60,8 +59,10 @@
   border: 1px solid #e7c598;
   color: #6a4013;
   border-radius: 12px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   font-size: 0.88rem;
+  line-height: 1.45;
+  margin-bottom: 10px;
 }
 
 .heroRow {
@@ -96,6 +97,27 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   height: 52px;
+  flex-shrink: 0;
+}
+
+.utilityBar {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.installButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 2px solid #e5b9a8;
+  background: #fff8f1;
+  color: #752a2f;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .tabButton {
@@ -116,12 +138,13 @@
 
 .contentPane {
   min-height: 0;
+  flex: 1;
   display: grid;
   align-content: start;
-  gap: 6px;
-  overflow-y: auto;
+  gap: 10px;
+  overflow-y: visible;
   scrollbar-gutter: stable;
-  padding-bottom: 6px;
+  padding-bottom: 20px;
 }
 
 .tabButton.active {
@@ -274,28 +297,123 @@
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.scannerViewport {
+  width: min(100%, 280px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  border-radius: 14px;
+  overflow: hidden;
+  border: 2px solid #efcfbf;
+  background: #2b1f1f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
 }
 
 .video {
   width: 100%;
-  border-radius: 12px;
-  border: 2px solid #efcfbf;
-  min-height: 210px;
+  height: 100%;
   background: #2b1f1f;
+  object-fit: cover;
+  display: block;
+}
+
+.hiddenCanvas {
+  display: none;
 }
 
 .helper {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   font-size: 0.82rem;
   color: #70434b;
 }
 
+.scanResult {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff5ef;
+  border: 1px solid #f0d6c8;
+  color: #752a2f;
+  font-size: 0.82rem;
+  word-break: break-word;
+}
+
 .manualRow {
-  margin-top: 8px;
+  margin-top: 12px;
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 6px;
+}
+
+.handoffCard {
+  background: linear-gradient(180deg, #fffdf8 0%, #fff4ea 100%);
+  border: 1px solid #f2ddcf;
+  border-radius: 18px;
+  padding: 18px 16px 22px;
+  box-shadow: 0 12px 28px rgba(125, 47, 61, 0.12);
+  display: grid;
+  gap: 14px;
+}
+
+.handoffEyebrow {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #c85a5a;
+}
+
+.handoffCard h2 {
+  margin: 0;
+  font-size: 1.3rem;
+  line-height: 1.2;
+}
+
+.handoffHint {
+  margin: 0;
+  color: #6e4951;
+  font-size: 0.92rem;
+}
+
+.handoffQrWrap {
+  background: #fff;
+  border: 2px solid #efcfbf;
+  border-radius: 18px;
+  padding: 12px;
+}
+
+.handoffQrImage {
+  width: 100%;
+  max-width: 420px;
+  aspect-ratio: 1 / 1;
+  display: block;
+  margin: 0 auto;
+  border-radius: 12px;
+}
+
+.handoffLink {
+  color: #752a2f;
+  text-align: center;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.handoffButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: none;
+  border-radius: 12px;
+  padding: 13px 16px;
+  background: linear-gradient(135deg, #d4666e 0%, #c85a5a 100%);
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 800;
+  cursor: pointer;
 }
 
 .createdPanel {
@@ -333,9 +451,14 @@
 }
 
 @media (max-width: 380px) {
+  .tabNav {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
   .tabButton {
     font-size: 0.74rem;
-    padding: 9px 6px;
+    padding: 10px 6px;
   }
 
   .listItem {
@@ -345,5 +468,17 @@
   .listItemActions {
     width: 100%;
     grid-template-columns: 1fr 1fr;
+  }
+
+  .scannerViewport {
+    width: 100%;
+  }
+
+  .utilityBar {
+    justify-content: stretch;
+  }
+
+  .installButton {
+    width: 100%;
   }
 }

@@ -1,8 +1,14 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import jsQR from "jsqr";
 import QRCode from "qrcode";
 import styles from "./page.module.css";
+
+type DeferredInstallPrompt = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 type CardRow = {
   card_public_id: string;
@@ -15,7 +21,7 @@ type CardRow = {
 
 type ScannerState = "idle" | "running" | "error";
 type DeviceState = "unknown" | "active" | "needs-activation";
-type UIMode = "scan" | "list" | "create" | "edit";
+type UIMode = "scan" | "list" | "create" | "edit" | "handoff";
 
 type CreateCardResponse = {
   card_public_id?: string;
@@ -27,6 +33,32 @@ type CreateCardResponse = {
 
 function shortCardId(publicId: string): string {
   return publicId.slice(0, 4).toUpperCase();
+}
+
+function translateScannerState(state: ScannerState): string {
+  switch (state) {
+    case "running":
+      return "Escaneando";
+    case "error":
+      return "Error";
+    default:
+      return "Listo";
+  }
+}
+
+function translateCardStatus(status: string): string {
+  switch (status) {
+    case "ACTIVE":
+      return "Activa";
+    case "REWARDED":
+      return "Completada";
+    case "REDEEMED":
+      return "Canjeada";
+    case "DISABLED":
+      return "Desactivada";
+    default:
+      return status;
+  }
 }
 
 function normalizeCardCode(rawValue: string): string {
@@ -63,6 +95,7 @@ export default function Home() {
   const [joinUrl, setJoinUrl] = useState("");
   const [joinQrDataUrl, setJoinQrDataUrl] = useState("");
   const [lastCreatedCard, setLastCreatedCard] = useState("");
+  const [lastCreatedCustomerName, setLastCreatedCustomerName] = useState("");
 
   // Edit mode
   const [selectedCard, setSelectedCard] = useState<CardRow | null>(null);
@@ -74,21 +107,48 @@ export default function Home() {
 
   // Scanner
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const [scannerState, setScannerState] = useState<ScannerState>("idle");
   const [scanResult, setScanResult] = useState("");
   const [manualCode, setManualCode] = useState("");
-
-  const hasBarcodeDetector = useMemo(
-    () => typeof window !== "undefined" && "BarcodeDetector" in window,
-    []
-  );
+  const [installPromptEvent, setInstallPromptEvent] = useState<DeferredInstallPrompt | null>(null);
+  const [isStandalone, setIsStandalone] = useState(false);
 
   useEffect(() => {
     void loadCards();
     return () => {
       stopScanner();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const standalone = window.matchMedia("(display-mode: standalone)").matches;
+    const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
+    setIsStandalone(standalone || iosStandalone);
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as DeferredInstallPrompt);
+    };
+
+    const handleInstalled = () => {
+      setInstallPromptEvent(null);
+      setIsStandalone(true);
+      setNotice("La app web se instalo correctamente en el inicio.");
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
     };
   }, []);
 
@@ -180,6 +240,8 @@ export default function Home() {
     setJoinUrl("");
     setJoinQrDataUrl("");
 
+    const createdCustomerName = customerName.trim();
+
     try {
       const response = await fetch("/api/v1/cards", {
         method: "POST",
@@ -203,10 +265,11 @@ export default function Home() {
 
       setJoinUrl(data.join_url ?? "");
       setLastCreatedCard(data.card_public_id ?? "");
+      setLastCreatedCustomerName(createdCustomerName || "Cliente sin nombre");
 
       if (data.join_url) {
         const qrDataUrl = await QRCode.toDataURL(data.join_url, {
-          width: 320,
+          width: 640,
           margin: 1,
           color: {
             dark: "#752a2f",
@@ -217,23 +280,27 @@ export default function Home() {
       }
 
       setNotice("Tarjeta creada correctamente");
-      
+
       // Limpiar formulario
       setCustomerName("");
       setRewardName("Manicura gratis");
       setRewardDescription("Al completar 9 sellos");
       setStampLimit(9);
-      
-      // Reload y cambiar vista
-      setTimeout(() => {
-        void loadCards();
-        setUiMode("scan");
-        setJoinUrl("");
-        setJoinQrDataUrl("");
-      }, 1500);
+
+      void loadCards();
+      setUiMode("handoff");
     } catch {
       setNotice("Error de conexion al crear la tarjeta");
     }
+  }
+
+  function closeCreatedCardView() {
+    setUiMode("scan");
+    setJoinUrl("");
+    setJoinQrDataUrl("");
+    setLastCreatedCard("");
+    setLastCreatedCustomerName("");
+    void loadCards();
   }
 
   function openEditCard(card: CardRow) {
@@ -296,11 +363,19 @@ export default function Home() {
       return;
     }
 
+    stopScanner();
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: {
             ideal: "environment",
+          },
+          width: {
+            ideal: 720,
+          },
+          height: {
+            ideal: 720,
           },
         },
         audio: false,
@@ -311,33 +386,47 @@ export default function Home() {
       await videoRef.current.play();
       setScannerState("running");
 
-      if (!hasBarcodeDetector) {
-        setNotice("Tu navegador no soporta deteccion QR nativa. Puedes ingresar el codigo manualmente.");
-        return;
-      }
-
-      const detector = new window.BarcodeDetector({
-        formats: ["qr_code", "aztec", "pdf417"],
-      });
-
       const loop = async () => {
-        if (!videoRef.current) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+
+        if (!video || !canvas) {
           return;
         }
 
         try {
-          const found = await detector.detect(videoRef.current);
-          if (found.length > 0) {
-            const value = found[0].rawValue ?? "";
-            if (value) {
-              setScanResult(value);
-              await submitStamp(value);
-              stopScanner();
-              return;
+          if (video.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) {
+            const context = canvas.getContext("2d", { willReadFrequently: true });
+
+            if (context) {
+              const width = video.videoWidth;
+              const height = video.videoHeight;
+
+              if (width > 0 && height > 0) {
+                canvas.width = width;
+                canvas.height = height;
+                context.drawImage(video, 0, 0, width, height);
+
+                const frame = context.getImageData(0, 0, width, height);
+                const found = jsQR(frame.data, frame.width, frame.height, {
+                  inversionAttempts: "dontInvert",
+                });
+                const value = found?.data ?? "";
+
+                if (value) {
+                  setScanResult(value);
+                  await submitStamp(value);
+                  stopScanner();
+                  return;
+                }
+              }
             }
           }
         } catch {
-          setNotice("No se pudo leer el codigo. Intenta nuevamente.");
+          setScannerState("error");
+          setNotice("No se pudo leer el codigo QR. Intenta nuevamente.");
+          stopScanner();
+          return;
         }
 
         rafRef.current = requestAnimationFrame(() => {
@@ -421,6 +510,37 @@ export default function Home() {
     setManualCode("");
   }
 
+  async function handleInstallApp() {
+    if (isStandalone) {
+      setNotice("La app ya esta instalada en el inicio de este dispositivo.");
+      return;
+    }
+
+    if (installPromptEvent) {
+      await installPromptEvent.prompt();
+      const choice = await installPromptEvent.userChoice;
+
+      if (choice.outcome === "accepted") {
+        setNotice("Instalacion iniciada desde el navegador.");
+      } else {
+        setNotice("Instalacion cancelada. Puedes intentarlo de nuevo cuando quieras.");
+      }
+
+      setInstallPromptEvent(null);
+      return;
+    }
+
+    const userAgent = navigator.userAgent.toLowerCase();
+    const isIos = /iphone|ipad|ipod/.test(userAgent);
+
+    if (isIos) {
+      setNotice("En iPhone abre Compartir y toca 'Anadir a pantalla de inicio' para instalar la app.");
+      return;
+    }
+
+    setNotice("Si tu navegador no muestra instalacion automatica, abre el menu y busca 'Instalar app' o 'Anadir a pantalla de inicio'.");
+  }
+
   return (
     <div className={styles.page}>
       <div className={styles.backgroundGlow} aria-hidden />
@@ -432,10 +552,9 @@ export default function Home() {
           </div>
         </header>
 
-        {notice ? <div className={styles.notice}>{notice}</div> : null}
-
         {deviceState !== "active" ? (
           <section className={styles.heroRow}>
+            {notice ? <div className={styles.notice}>{notice}</div> : null}
             <article className={styles.activationCard}>
               <h2>Activar este dispositivo</h2>
               <p className={styles.activationHint}>
@@ -481,32 +600,68 @@ export default function Home() {
 
         {deviceState === "active" ? (
           <>
-            {/* Tab Navigation */}
-            <div className={styles.tabNav}>
-              <button
-                className={`${styles.tabButton} ${uiMode === "scan" ? styles.active : ""}`}
-                onClick={() => setUiMode("scan")}
-              >
-                <i className="fas fa-camera"></i>
-                Escanear
-              </button>
-              <button
-                className={`${styles.tabButton} ${uiMode === "list" ? styles.active : ""}`}
-                onClick={() => setUiMode("list")}
-              >
-                <i className="fas fa-list"></i>
-                Tarjetas
-              </button>
-              <button
-                className={`${styles.tabButton} ${uiMode === "create" ? styles.active : ""}`}
-                onClick={() => setUiMode("create")}
-              >
-                <i className="fas fa-plus-circle"></i>
-                Crear Nueva
-              </button>
-            </div>
+            {uiMode !== "handoff" ? (
+              <>
+                <div className={styles.tabNav}>
+                  <button
+                    className={`${styles.tabButton} ${uiMode === "scan" ? styles.active : ""}`}
+                    onClick={() => setUiMode("scan")}
+                  >
+                    <i className="fas fa-camera"></i>
+                    Escanear
+                  </button>
+                  <button
+                    className={`${styles.tabButton} ${uiMode === "list" ? styles.active : ""}`}
+                    onClick={() => setUiMode("list")}
+                  >
+                    <i className="fas fa-list"></i>
+                    Tarjetas
+                  </button>
+                  <button
+                    className={`${styles.tabButton} ${uiMode === "create" ? styles.active : ""}`}
+                    onClick={() => setUiMode("create")}
+                  >
+                    <i className="fas fa-plus-circle"></i>
+                    Crear Nueva
+                  </button>
+                </div>
+
+                <div className={styles.utilityBar}>
+                  <button type="button" className={styles.installButton} onClick={() => void handleInstallApp()}>
+                    <i className="fas fa-download"></i>
+                    {isStandalone ? "App instalada" : "Instalar app en inicio"}
+                  </button>
+                </div>
+              </>
+            ) : null}
 
             <section className={styles.contentPane}>
+            {notice ? <div className={styles.notice}>{notice}</div> : null}
+
+            {uiMode === "handoff" ? (
+              <article className={styles.handoffCard}>
+                <p className={styles.handoffEyebrow}>Tarjeta lista para el cliente</p>
+                <h2>Tarjeta de Fidelidad de {lastCreatedCustomerName}</h2>
+                <p className={styles.handoffHint}>Pide al cliente que escanee este QR para abrir su tarjeta.</p>
+
+                {joinQrDataUrl ? (
+                  <div className={styles.handoffQrWrap}>
+                    <img className={styles.handoffQrImage} src={joinQrDataUrl} alt="QR de tarjeta del cliente" />
+                  </div>
+                ) : null}
+
+                {joinUrl ? (
+                  <a href={joinUrl} target="_blank" rel="noreferrer" className={styles.handoffLink}>
+                    Abrir enlace de tarjeta
+                  </a>
+                ) : null}
+
+                <button type="button" className={styles.handoffButton} onClick={closeCreatedCardView}>
+                  <i className="fas fa-arrow-left"></i>
+                  Volver a la App
+                </button>
+              </article>
+            ) : null}
 
             {/* LIST MODE */}
             {uiMode === "list" && (
@@ -529,6 +684,7 @@ export default function Home() {
                           <p className={styles.cardId}>#{shortCardId(card.card_public_id)}</p>
                           <p className={styles.meta}>{card.customer_name || "Sin nombre"}</p>
                           <p className={styles.meta}>{card.reward_name}</p>
+                          <p className={styles.meta}>Estado: {translateCardStatus(card.status)}</p>
                           <div className={styles.progressWrap}>
                             <p className={styles.progress}>
                               {card.stamp_count} / {card.stamp_limit} sellos
@@ -572,7 +728,7 @@ export default function Home() {
                 <div className={styles.scannerActions}>
                   <button type="button" onClick={() => void startScanner()} disabled={deviceState !== "active"}>
                     <i className="fas fa-camera"></i>
-                    Abrir cámara
+                    Abrir camara
                   </button>
                   <button type="button" onClick={stopScanner} className={styles.ghostButton}>
                     <i className="fas fa-times"></i>
@@ -580,9 +736,15 @@ export default function Home() {
                   </button>
                 </div>
 
-                <video ref={videoRef} className={styles.video} muted playsInline />
+                <div className={styles.scannerViewport}>
+                  <video ref={videoRef} className={styles.video} muted playsInline />
+                </div>
+                <canvas ref={canvasRef} className={styles.hiddenCanvas} aria-hidden />
 
-                <p className={styles.helper}>Estado: {scannerState}</p>
+                <p className={styles.helper}>Estado: {translateScannerState(scannerState)}</p>
+                <p className={styles.helper}>Apunta al QR dentro del cuadro para registrar el sello.</p>
+
+                {scanResult ? <p className={styles.scanResult}>Ultimo QR leido: {normalizeCardCode(scanResult)}</p> : null}
 
                 <div className={styles.manualRow}>
                   <input
@@ -643,25 +805,6 @@ export default function Home() {
                   </button>
                 </form>
 
-                {joinUrl ? (
-                  <div className={styles.createdPanel}>
-                    <div className={styles.createdGrid}>
-                      <div>
-                        <p>Tarjeta creada: #{shortCardId(lastCreatedCard)}</p>
-                        <p>Muestra este QR al cliente</p>
-                        <a href={joinUrl} target="_blank" rel="noreferrer">
-                          {joinUrl}
-                        </a>
-                      </div>
-
-                      {joinQrDataUrl ? (
-                        <div className={styles.qrPanel}>
-                          <img className={styles.qrImage} src={joinQrDataUrl} alt="QR onboarding" />
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                ) : null}
               </article>
             )}
 
