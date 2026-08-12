@@ -2,7 +2,7 @@
   "name": "Salon Nails - Tarjeta de Fidelización",
   "short_name": "Salon Nails",
   "description": "Tu tarjeta de fidelización personalizada. Escanea y acumula sellos para obtener recompensas.",
-  "start_url": "/",
+  "start_url": "/app-entry",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait-primary",
@@ -53,7 +53,7 @@
       "name": "Ver mi tarjeta",
       "short_name": "Mi tarjeta",
       "description": "Abre tu tarjeta de fidelización personalizada",
-      "url": "/",
+      "url": "/app-entry",
       "icons": [
         {
           "src": "/icon-192.png",

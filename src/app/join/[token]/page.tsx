@@ -52,6 +52,10 @@ export default function LoyaltyCardPage() {
   const [installMessage, setInstallMessage] = useState("");
 
   useEffect(() => {
+    if (typeof window !== "undefined" && token) {
+      window.localStorage.setItem("customer_card_token", token);
+    }
+
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
     setIsStandalone(standalone);
 
@@ -68,6 +72,11 @@ export default function LoyaltyCardPage() {
   }, []);
 
   async function handleInstallApp() {
+    if (typeof window !== "undefined" && token) {
+      window.localStorage.setItem("customer_card_token", token);
+      window.localStorage.setItem("home_install_target", "customer-card");
+    }
+
     if (isStandalone) {
       setInstallMessage("La app ya esta instalada en este dispositivo.");
       return;
