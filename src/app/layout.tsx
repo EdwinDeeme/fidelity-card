@@ -14,7 +14,7 @@ const titleFont = Playfair_Display({
 });
 
 export const metadata: Metadata = {
-  title: "Salon Nails - Tarjeta de Fidelización",
+  title: "Joss Studio - Tarjeta de Fidelización",
   description: "Tu tarjeta de fidelización personalizada. Escanea y acumula sellos para obtener recompensas.",
   manifest: "/manifest.json",
   icons: {
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Salon Nails",
+    title: "Joss Studio",
   },
   formatDetection: {
     telephone: false,

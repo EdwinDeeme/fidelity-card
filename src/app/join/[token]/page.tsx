@@ -55,6 +55,7 @@ export default function LoyaltyCardPage() {
     if (typeof window !== "undefined" && token) {
       window.localStorage.setItem("customer_card_token", token);
       window.localStorage.setItem("home_install_target", "customer-card");
+      document.cookie = `customer_card_token=${encodeURIComponent(token)}; Path=/; Max-Age=31536000; SameSite=Lax`;
     }
 
     const standalone = window.matchMedia("(display-mode: standalone)").matches;
@@ -76,6 +77,7 @@ export default function LoyaltyCardPage() {
     if (typeof window !== "undefined" && token) {
       window.localStorage.setItem("customer_card_token", token);
       window.localStorage.setItem("home_install_target", "customer-card");
+      document.cookie = `customer_card_token=${encodeURIComponent(token)}; Path=/; Max-Age=31536000; SameSite=Lax`;
     }
 
     if (isStandalone) {

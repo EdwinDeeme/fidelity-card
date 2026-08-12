@@ -1,6 +1,6 @@
 {
-  "name": "Salon Nails - Tarjeta de Fidelización",
-  "short_name": "Salon Nails",
+  "name": "Joss Studio - Tarjeta de Fidelización",
+  "short_name": "Joss Studio",
   "description": "Tu tarjeta de fidelización personalizada. Escanea y acumula sellos para obtener recompensas.",
   "start_url": "/app-entry",
   "scope": "/",
