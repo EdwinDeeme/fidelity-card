@@ -25,8 +25,6 @@ type UIMode = "scan" | "list" | "create" | "edit" | "handoff";
 
 type CreateCardResponse = {
   card_public_id?: string;
-    case "success":
-      return "Escaneo completado";
   stamp_count?: number;
   stamp_limit?: number;
   join_url?: string;
@@ -41,6 +39,8 @@ function translateScannerState(state: ScannerState): string {
   switch (state) {
     case "running":
       return "Escaneando";
+    case "success":
+      return "Escaneo completado";
     case "error":
       return "Error";
     default:
