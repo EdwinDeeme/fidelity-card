@@ -4,6 +4,11 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import QRCode from "qrcode";
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 type CardData = {
   card_public_id: string;
   customer_name?: string;
@@ -41,6 +46,58 @@ export default function LoyaltyCardPage() {
   const [error, setError] = useState("");
   const [card, setCard] = useState<CardData | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState("");
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const [installMessage, setInstallMessage] = useState("");
+
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches;
+    setIsStandalone(standalone);
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPromptEvent(event as BeforeInstallPromptEvent);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  async function handleInstallApp() {
+    if (isStandalone) {
+      setInstallMessage("La app ya esta instalada en este dispositivo.");
+      return;
+    }
+
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      setInstallMessage("En iPhone abre Compartir y toca 'Anadir a pantalla de inicio'.");
+      return;
+    }
+
+    if (!installPromptEvent) {
+      setInstallMessage("Si no aparece el instalador, abre el menu del navegador y toca 'Instalar app'.");
+      return;
+    }
+
+    try {
+      setInstalling(true);
+      await installPromptEvent.prompt();
+      const choice = await installPromptEvent.userChoice;
+      if (choice.outcome === "accepted") {
+        setInstallMessage("Instalacion iniciada correctamente.");
+        setInstallPromptEvent(null);
+      } else {
+        setInstallMessage("Instalacion cancelada.");
+      }
+    } finally {
+      setInstalling(false);
+    }
+  }
 
   useEffect(() => {
     void (async () => {
@@ -293,6 +350,42 @@ export default function LoyaltyCardPage() {
               >
                 <p style={{ margin: 0, color: "#752a2f", fontWeight: 700, fontSize: 13 }}>{card.reward_name}</p>
               </div>
+            )}
+          </div>
+          <div
+            style={{
+              marginTop: 14,
+              display: "grid",
+              justifyItems: "center",
+              gap: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => void handleInstallApp()}
+              disabled={installing}
+              style={{
+                border: "none",
+                borderRadius: 12,
+                padding: "12px 14px",
+                background: "linear-gradient(135deg, #d4666e 0%, #c85a5a 100%)",
+                color: "#fff",
+                fontSize: 15,
+                fontWeight: 700,
+                cursor: "pointer",
+                width: "100%",
+                maxWidth: 320,
+              }}
+            >
+              {isStandalone ? "App instalada en inicio" : installing ? "Instalando..." : "Instalar app en inicio"}
+            </button>
+
+            {installMessage ? (
+              <p style={{ margin: 0, color: "#7f4f58", fontSize: 13, lineHeight: 1.4, textAlign: "center" }}>{installMessage}</p>
+            ) : (
+              <p style={{ margin: 0, color: "#7f4f58", fontSize: 13, lineHeight: 1.4, textAlign: "center" }}>
+                Guarda tu tarjeta como app para abrirla rapido desde la pantalla de inicio.
+              </p>
             )}
           </div>
         </section>
